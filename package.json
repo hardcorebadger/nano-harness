@@ -1,0 +1,8 @@
+{
+  "name": "nano-harness",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "scripts": { "dev": "tsx src/index.ts" },
+  "devDependencies": { "tsx": "^4.19.0", "typescript": "^5.7.0" }
+}
