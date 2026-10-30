@@ -44,4 +44,32 @@ const answer = await run;
 
 The host owns message delivery and should only call `send` for new user messages belonging to that run. Steering waits for all tool calls in the current assistant turn; it does not cancel an in-flight model request or tool.
 
-This is a deliberately small starting point, not a production framework: tool validation, retries, persistence, and streaming are left to the caller.
+Streaming is opt-in with the seventh `agent` argument, a callback invoked as text arrives. Tool-call arguments are accumulated internally and tools run only after the streamed model turn is complete. The promise still resolves to the full final answer, so existing callers remain unchanged:
+
+```ts
+const answer = await agent(
+  "Explain what this harness does",
+  tools,
+  undefined,
+  undefined,
+  {},
+  undefined,
+  chunk => process.stdout.write(chunk),
+);
+```
+
+When a callback is provided, chat completions request OpenAI-compatible server-sent events (`stream: true`). Without one, the harness uses the existing non-streaming response path.
+
+Cancellation is opt-in with the eighth `agent` argument. The signal is passed to chat and embedding requests and is available to tools as their optional second `run` argument. Existing one-argument tools continue to work:
+
+```ts
+const controller = new AbortController();
+const run = agent("Do a cancellable task", tools, undefined, undefined, {}, undefined, undefined, controller.signal);
+// Later, for example when the user stops the run:
+controller.abort();
+await run; // rejects with the abort reason (or an AbortError)
+```
+
+Tools can use `context?.signal` to cancel their own asynchronous work. Cancellation stops the agent rather than returning a partial answer.
+
+This is a deliberately small starting point, not a production framework: tool validation, retries, and persistence are left to the caller.

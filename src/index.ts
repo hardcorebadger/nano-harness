@@ -1,8 +1,13 @@
 export type Tool = {
   description: string;
   parameters: Record<string, unknown>;
-  run: (input: Record<string, unknown>) => unknown | Promise<unknown>;
+  run: (input: Record<string, unknown>, context?: ToolContext) => unknown | Promise<unknown>;
   always?: boolean;
+};
+
+export type ToolContext = {
+  /** Aborts when the agent run is cancelled. Tools should pass this to their own async work. */
+  signal?: AbortSignal;
 };
 
 export type Skill = {
@@ -41,6 +46,79 @@ const cosine = (a: number[], b: number[]) => {
 
 const env = (globalThis as any).process?.env ?? {};
 
+/** Read an OpenAI-compatible chat-completions SSE response into one assistant message. */
+async function readChatStream(
+  response: Response,
+  onTextDelta: (text: string) => void | Promise<void>,
+): Promise<any> {
+  if (!response.body) throw new Error("Streaming response has no body");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let content = "";
+  const toolCalls = new Map<number, any>();
+
+  const consumeEvent = async (event: string) => {
+    const data = event
+      .split(/\r?\n/)
+      .filter(line => line.startsWith("data:"))
+      .map(line => line.slice(5).trimStart())
+      .join("\n");
+    if (!data || data === "[DONE]") return;
+
+    const chunk = JSON.parse(data);
+    const delta = chunk.choices?.[0]?.delta;
+    if (!delta) return;
+    if (typeof delta.content === "string") {
+      content += delta.content;
+      await onTextDelta(delta.content);
+    }
+    for (const part of delta.tool_calls ?? []) {
+      const index = part.index ?? 0;
+      let call = toolCalls.get(index);
+      if (!call) {
+        call = { id: "", type: "function", function: { name: "", arguments: "" } };
+        toolCalls.set(index, call);
+      }
+      if (part.id) call.id = part.id;
+      if (part.type) call.type = part.type;
+      if (part.function?.name) call.function.name += part.function.name;
+      if (part.function?.arguments) call.function.arguments += part.function.arguments;
+    }
+  };
+
+  const consumeLines = async (final = false) => {
+    let boundary: number;
+    while ((boundary = buffer.search(/\r?\n\r?\n/)) !== -1) {
+      const event = buffer.slice(0, boundary);
+      const separator = buffer.slice(boundary).match(/^\r?\n\r?\n/)![0];
+      buffer = buffer.slice(boundary + separator.length);
+      await consumeEvent(event);
+    }
+    if (final && buffer.trim()) {
+      await consumeEvent(buffer);
+      buffer = "";
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    await consumeLines();
+  }
+  buffer += decoder.decode();
+  await consumeLines(true);
+
+  const message: any = { role: "assistant", content };
+  if (toolCalls.size) {
+    message.tool_calls = [...toolCalls.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([, call]) => call);
+  }
+  return message;
+}
+
 export async function agent(
   prompt: string,
   tools: Record<string, Tool>,
@@ -48,10 +126,20 @@ export async function agent(
   model = env.MODEL ?? "gpt-4o-mini",
   skills: Record<string, Skill> = {},
   steering?: SteeringQueue,
+  onTextDelta?: (text: string) => void | Promise<void>,
+  signal?: AbortSignal,
 ): Promise<string> {
+  const throwIfAborted = () => {
+    if (!signal?.aborted) return;
+    if (signal.reason !== undefined) throw signal.reason;
+    const error = new Error("The operation was aborted");
+    error.name = "AbortError";
+    throw error;
+  };
+  throwIfAborted();
   const skillNames = Object.keys(skills);
   if (skillNames.length && Object.hasOwn(tools, "read_skill")) {
-    throw new Error('"read_skill" is reserved when using the built-in skill support');
+    throw new Error('\"read_skill\" is reserved when using the built-in skill support');
   }
   const skillTool: Tool = {
     description: "Load the full instructions for an available skill when it is relevant to the user's request.",
@@ -63,7 +151,13 @@ export async function agent(
       required: ["name"],
       additionalProperties: false,
     },
-    run: async ({ name }) => {
+    run: async ({ name }, context) => {
+      if (context?.signal?.aborted) {
+        if (context.signal.reason !== undefined) throw context.signal.reason;
+        const error = new Error("The operation was aborted");
+        error.name = "AbortError";
+        throw error;
+      }
       const skill = skills[String(name ?? "")];
       if (!skill) throw new Error(`Unknown skill: ${String(name ?? "")}`);
       return skill.load();
@@ -108,12 +202,14 @@ export async function agent(
   const cap = (limit: number) => Math.max(0, limit - always.length - 1);
   if (always.length + 1 > 100) throw new Error("Always-available tools exceed the 100-tool hard cap");
   const embed = async (input: string[]) => {
+    throwIfAborted();
     const base = env.BASE_URL ?? "https://api.openai.com/v1/chat/completions";
     const url = /\/chat\/completions\/?$/.test(base) ? base.replace(/\/chat\/completions\/?$/, "/embeddings") : `${base.replace(/\/$/, "")}/embeddings`;
     const response = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${env.OPENAI_API_KEY}` },
       body: JSON.stringify({ model: env.EMBEDDING_MODEL ?? "text-embedding-3-small", input }),
+      signal,
     });
     if (!response.ok) throw new Error(`Embedding API ${response.status}: ${await response.text()}`);
     const data = (await response.json() as any).data as { index: number; embedding: number[] }[];
@@ -121,6 +217,7 @@ export async function agent(
   };
 
   for (let step = 0; step < 8; step++) {
+    throwIfAborted();
     const available = new Set([...always, ...loaded.keys()]);
     const response = await fetch(env.BASE_URL ?? "https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -128,10 +225,18 @@ export async function agent(
         "content-type": "application/json",
         authorization: `Bearer ${env.OPENAI_API_KEY}`,
       },
-      body: JSON.stringify({ model, messages, tools: [searchTool, ...[...available].map(definition)] }),
+      body: JSON.stringify({
+        model,
+        messages,
+        tools: [searchTool, ...[...available].map(definition)],
+        ...(onTextDelta ? { stream: true } : {}),
+      }),
+      signal,
     });
     if (!response.ok) throw new Error(`LLM ${response.status}: ${await response.text()}`);
-    const choice = (await response.json() as any).choices[0].message;
+    const choice = onTextDelta
+      ? await readChatStream(response, onTextDelta)
+      : (await response.json() as any).choices[0].message;
     messages.push(choice);
     if (!choice.tool_calls?.length) {
       if (injectSteering()) continue;
@@ -139,6 +244,7 @@ export async function agent(
     }
 
     for (const call of choice.tool_calls) {
+      throwIfAborted();
       const input = JSON.parse(call.function.arguments);
       let result: unknown;
       if (call.function.name === "search_tools") {
@@ -189,7 +295,7 @@ export async function agent(
           const state = loaded.get(call.function.name)!;
           state.used = state.touched = ++clock;
         }
-        result = await tool.run(input);
+        result = await tool.run(input, { signal });
       }
       messages.push({
         role: "tool",
