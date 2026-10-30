@@ -10,6 +10,11 @@ export type ToolContext = {
   signal?: AbortSignal;
 };
 
+export type AgentOptions = {
+  /** Maximum number of model turns before the run fails. Defaults to 8. */
+  maxSteps?: number;
+};
+
 export type Skill = {
   /** When the assistant should use this skill. */
   description: string;
@@ -128,7 +133,12 @@ export async function agent(
   steering?: SteeringQueue,
   onTextDelta?: (text: string) => void | Promise<void>,
   signal?: AbortSignal,
+  options: AgentOptions = {},
 ): Promise<string> {
+  const maxSteps = options.maxSteps ?? 8;
+  if (!Number.isSafeInteger(maxSteps) || maxSteps <= 0) {
+    throw new RangeError("maxSteps must be a positive safe integer");
+  }
   const throwIfAborted = () => {
     if (!signal?.aborted) return;
     if (signal.reason !== undefined) throw signal.reason;
@@ -139,7 +149,7 @@ export async function agent(
   throwIfAborted();
   const skillNames = Object.keys(skills);
   if (skillNames.length && Object.hasOwn(tools, "read_skill")) {
-    throw new Error('\"read_skill\" is reserved when using the built-in skill support');
+    throw new Error('"read_skill" is reserved when using the built-in skill support');
   }
   const skillTool: Tool = {
     description: "Load the full instructions for an available skill when it is relevant to the user's request.",
@@ -216,7 +226,7 @@ export async function agent(
     return data.sort((a, b) => a.index - b.index).map(item => item.embedding);
   };
 
-  for (let step = 0; step < 8; step++) {
+  for (let step = 0; step < maxSteps; step++) {
     throwIfAborted();
     const available = new Set([...always, ...loaded.keys()]);
     const response = await fetch(env.BASE_URL ?? "https://api.openai.com/v1/chat/completions", {
@@ -305,5 +315,5 @@ export async function agent(
     }
     injectSteering();
   }
-  throw new Error("Agent reached the 8-step limit");
+  throw new Error(`Agent reached the ${maxSteps}-step limit`);
 }

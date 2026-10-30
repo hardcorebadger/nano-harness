@@ -8,7 +8,7 @@ export OPENAI_API_KEY=...
 npx tsx -e 'import { agent } from "./src/index.ts"; console.log(await agent("What is 2 + 2?", {}))'
 ```
 
-Add tools as `{ name: { description, parameters, run } }`. `parameters` is a JSON Schema object; `run` receives parsed arguments and may be async. Set `MODEL` or `BASE_URL` to use another OpenAI-compatible endpoint. The loop stops after eight model turns.
+Add tools as `{ name: { description, parameters, run } }`. `parameters` is a JSON Schema object; `run` receives parsed arguments and may be async. Set `MODEL` or `BASE_URL` to use another OpenAI-compatible endpoint. The loop stops after eight model turns by default.
 
 Tools are deferred by default: mark a tool `always: true` to include it in every native model call. `search_tools` uses OpenAI-compatible embeddings (`text-embedding-3-small` by default) to vector-search deferred tool names, descriptions, and schemas; its top five results are added to the active tool set and appear in the native model call on the next loop turn. The active set has a soft cap of 25 tools and a hard cap of 100, including always-available tools and `search_tools`. At the soft cap, it evicts the least-recently-found unused deferred tool first. If all deferred tools have been used, it grows toward the hard cap; at the hard cap, it evicts the least-recently-used deferred tool. Set `EMBEDDING_MODEL` to override the embedding model; embeddings use `BASE_URL` and `OPENAI_API_KEY` too.
 
@@ -30,7 +30,7 @@ const answer = await agent("Export these records as CSV", tools, undefined, unde
 
 The harness does not discover files or grant filesystem access itself: the host chooses which skills to expose and implements each loader. Only expose trusted skill files, and have loaders constrain paths rather than accepting model-provided paths.
 
-Steering is opt-in via a `SteeringQueue`. Keep a queue for the active run and call `send` whenever the user sends a message. The run consumes queued messages in order after the current model response and all its tool calls complete, then continues with another model call. Messages arriving during a final text-only response also interrupt that return and are processed on the next turn. Pass the queue as the sixth `agent` argument:
+Steering is opt-in with a `SteeringQueue`. Keep a queue for the active run and call `send` whenever the user sends a message. The run consumes queued messages in order after the current model response and all its tool calls complete, then continues with another model call. Messages arriving during a final text-only response also interrupt that return and are processed on the next turn. Pass the queue as the sixth `agent` argument:
 
 ```ts
 import { agent, SteeringQueue } from "./src/index.ts";
@@ -71,5 +71,21 @@ await run; // rejects with the abort reason (or an AbortError)
 ```
 
 Tools can use `context?.signal` to cancel their own asynchronous work. Cancellation stops the agent rather than returning a partial answer.
+
+The maximum model-turn count is configurable with an optional ninth `agent` argument. It defaults to 8; invalid, zero, negative, or non-integer values are rejected before any request is sent:
+
+```ts
+const answer = await agent(
+  "Work through this longer task",
+  tools,
+  undefined,
+  undefined,
+  {},
+  undefined,
+  undefined,
+  undefined,
+  { maxSteps: 16 },
+);
+```
 
 This is a deliberately small starting point, not a production framework: tool validation, retries, and persistence are left to the caller.
