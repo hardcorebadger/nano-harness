@@ -72,6 +72,28 @@ await run; // rejects with the abort reason (or an AbortError)
 
 Tools can use `context?.signal` to cancel their own asynchronous work. Cancellation stops the agent rather than returning a partial answer.
 
+The optional `withToolTimeout` helper applies an independent deadline to an individual tool. It forwards the agent's abort signal, gives the tool a signal that also aborts on timeout, and rejects with a `TimeoutError` if the deadline expires (even if the tool ignores cancellation):
+
+```ts
+import { agent } from "./src/index.ts";
+import { withToolTimeout } from "./src/tool-timeout.ts";
+
+const tools = {
+  lookup: withToolTimeout({
+    description: "Look up a record",
+    parameters: { type: "object", properties: {} },
+    run: async (_input, context) => {
+      const response = await fetch("https://example.com/lookup", { signal: context?.signal });
+      return response.json();
+    },
+  }, 5_000),
+};
+
+const answer = await agent("Look up the record", tools);
+```
+
+`timeoutMs` must be a positive safe integer. The wrapper cannot forcibly stop arbitrary JavaScript; tools should observe the provided signal to cancel their underlying work promptly.
+
 The maximum model-turn count is configurable with an optional ninth `agent` argument. It defaults to 8; invalid, zero, negative, or non-integer values are rejected before any request is sent:
 
 ```ts
