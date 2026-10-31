@@ -72,6 +72,8 @@ await run; // rejects with the abort reason (or an AbortError)
 
 Tools can use `context?.signal` to cancel their own asynchronous work. Cancellation stops the agent rather than returning a partial answer.
 
+Tool failures are recoverable by default: if a tool's `run` throws, the harness sends its error message back as a JSON tool result (`{"error":"..."}`) and lets the model decide what to do next. Cancellation remains distinct; when the agent's `AbortSignal` is aborted, the run rejects with its abort reason instead of returning a recoverable tool error. Keep error messages concise and free of sensitive data because they are shared with the model.
+
 The maximum model-turn count is configurable with an optional ninth `agent` argument. It defaults to 8; invalid, zero, negative, or non-integer values are rejected before any request is sent:
 
 ```ts

@@ -18,7 +18,7 @@ export type AgentOptions = {
 export type Skill = {
   /** When the assistant should use this skill. */
   description: string;
-  /** Load the full skill instructions only when the assistant requests them. */
+  /** Load the full instructions only when the assistant requests them. */
   load: () => string | Promise<string>;
 };
 
@@ -149,7 +149,7 @@ export async function agent(
   throwIfAborted();
   const skillNames = Object.keys(skills);
   if (skillNames.length && Object.hasOwn(tools, "read_skill")) {
-    throw new Error('"read_skill" is reserved when using the built-in skill support');
+    throw new Error('\"read_skill\" is reserved when using the built-in skill support');
   }
   const skillTool: Tool = {
     description: "Load the full instructions for an available skill when it is relevant to the user's request.",
@@ -214,7 +214,7 @@ export async function agent(
   const embed = async (input: string[]) => {
     throwIfAborted();
     const base = env.BASE_URL ?? "https://api.openai.com/v1/chat/completions";
-    const url = /\/chat\/completions\/?$/.test(base) ? base.replace(/\/chat\/completions\/?$/, "/embeddings") : `${base.replace(/\/$/, "")}/embeddings`;
+    const url = /\\/chat\\/completions\\/?$/.test(base) ? base.replace(/\\/chat\\/completions\\/?$/, "/embeddings") : `${base.replace(/\\/$/, "")}/embeddings`;
     const response = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${env.OPENAI_API_KEY}` },
@@ -305,7 +305,13 @@ export async function agent(
           const state = loaded.get(call.function.name)!;
           state.used = state.touched = ++clock;
         }
-        result = await tool.run(input, { signal });
+        try {
+          result = await tool.run(input, { signal });
+        } catch (error) {
+          // Cancellation is a control-flow signal, not an ordinary tool failure to recover from.
+          throwIfAborted();
+          result = { error: error instanceof Error ? error.message : String(error) };
+        }
       }
       messages.push({
         role: "tool",
