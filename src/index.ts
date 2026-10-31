@@ -149,7 +149,7 @@ export async function agent(
   throwIfAborted();
   const skillNames = Object.keys(skills);
   if (skillNames.length && Object.hasOwn(tools, "read_skill")) {
-    throw new Error('\"read_skill\" is reserved when using the built-in skill support');
+    throw new Error('"read_skill" is reserved when using the built-in skill support');
   }
   const skillTool: Tool = {
     description: "Load the full instructions for an available skill when it is relevant to the user's request.",
@@ -214,7 +214,11 @@ export async function agent(
   const embed = async (input: string[]) => {
     throwIfAborted();
     const base = env.BASE_URL ?? "https://api.openai.com/v1/chat/completions";
-    const url = /\\/chat\\/completions\\/?$/.test(base) ? base.replace(/\\/chat\\/completions\\/?$/, "/embeddings") : `${base.replace(/\\/$/, "")}/embeddings`;
+    const trimmedBase = base.endsWith("/") ? base.slice(0, -1) : base;
+    const chatCompletionsPath = "/chat/completions";
+    const url = trimmedBase.endsWith(chatCompletionsPath)
+      ? `${trimmedBase.slice(0, -chatCompletionsPath.length)}/embeddings`
+      : `${trimmedBase}/embeddings`;
     const response = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${env.OPENAI_API_KEY}` },
