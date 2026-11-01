@@ -10,7 +10,7 @@ npx tsx -e 'import { agent } from "./src/index.ts"; console.log(await agent("Wha
 
 Add tools as `{ name: { description, parameters, run } }`. `parameters` is a JSON Schema object; `run` receives parsed arguments and may be async. Set `MODEL` or `BASE_URL` to use another OpenAI-compatible endpoint. The loop stops after eight model turns by default.
 
-Tools are deferred by default: mark a tool `always: true` to include it in every native model call. `search_tools` uses OpenAI-compatible embeddings (`text-embedding-3-small` by default) to vector-search deferred tool names, descriptions, and schemas; its top five results are added to the active tool set and appear in the native model call on the next loop turn. The active set has a soft cap of 25 tools and a hard cap of 100, including always-available tools and `search_tools`. At the soft cap, it evicts the least-recently-found unused deferred tool first. If all deferred tools have been used, it grows toward the hard cap; at the hard cap, it evicts the least-recently-used deferred tool. Set `EMBEDDING_MODEL` to override the embedding model; embeddings use `BASE_URL` and `OPENAI_API_KEY` too.
+Tools are deferred by default: mark a tool `always: true` to include it in every native model call. `search_tools` uses OpenAI-compatible embeddings (`text-embedding-3-small` by default) to vector-search deferred tool names, descriptions, and schemas; the top five matches are added to the active set and appear in the next model call. The active set has a soft cap of 25 tools and a hard cap of 100, including always-available tools and `search_tools`. At the soft cap, it evicts the least-recently-found unused deferred tool first. If all deferred tools have been used, it grows toward the hard cap; at the hard cap, it evicts the least-recently-used deferred tool. Set `EMBEDDING_MODEL` to override the embedding model; embeddings use `BASE_URL` and `OPENAI_API_KEY` too.
 
 Basic skill support is opt-in via the fifth `agent` argument. Each skill has a short `description` shown in the system prompt and a lazy `load` callback. The built-in, always-available `read_skill` tool invokes the callback only when requested and returns the full instructions to the model:
 
@@ -30,7 +30,7 @@ const answer = await agent("Export these records as CSV", tools, undefined, unde
 
 The harness does not discover files or grant filesystem access itself: the host chooses which skills to expose and implements each loader. Only expose trusted skill files, and have loaders constrain paths rather than accepting model-provided paths.
 
-Steering is opt-in with a `SteeringQueue`. Keep a queue for the active run and call `send` whenever the user sends a message. The run consumes queued messages in order after the current model response and all its tool calls complete, then continues with another model call. Messages arriving during a final text-only response also interrupt that return and are processed on the next turn. Pass the queue as the sixth `agent` argument:
+Steering is opt-in with a `SteeringQueue`. Keep a queue for the active run and call `send` whenever the user sends a message. The run consumes queued messages in order after the current model response and all its tool calls finish, then continues with another model call. Messages arriving during a final text-only response also interrupt that return and are processed on the next turn. Pass the queue as the sixth `agent` argument:
 
 ```ts
 import { agent, SteeringQueue } from "./src/index.ts";
@@ -44,7 +44,7 @@ const answer = await run;
 
 The host owns message delivery and should only call `send` for new user messages belonging to that run. Steering waits for all tool calls in the current assistant turn; it does not cancel an in-flight model request or tool.
 
-Streaming is opt-in with the seventh `agent` argument, a callback invoked as text arrives. Tool-call arguments are accumulated internally and tools run only after the streamed model turn is complete. The promise still resolves to the full final answer, so existing callers remain unchanged:
+Streaming is opt-in with the seventh `agent` argument, a callback invoked as text arrives. Tool-call arguments are accumulated internally and tools run only after the streamed model turn is complete. The promise still resolves to the full final answer, so existing callers remain compatible:
 
 ```ts
 const answer = await agent(
@@ -60,7 +60,7 @@ const answer = await agent(
 
 When a callback is provided, chat completions request OpenAI-compatible server-sent events (`stream: true`). Without one, the harness uses the existing non-streaming response path.
 
-Cancellation is opt-in with the eighth `agent` argument. The signal is passed to chat and embedding requests and is available to tools as their optional second `run` argument. Existing one-argument tools continue to work:
+Cancellation is opt-in with the eighth `agent` argument. Its signal is passed to chat and embedding requests and is available to tools as their optional second `run` argument. Existing one-argument tools continue to work:
 
 ```ts
 const controller = new AbortController();
@@ -70,12 +70,11 @@ controller.abort();
 await run; // rejects with the abort reason (or an AbortError)
 ```
 
-Tools can use `context?.signal` to cancel their own asynchronous work. Cancellation stops the agent rather than returning a partial answer.
+Tools can use `context?.signal` to cancel their own asynchronous work. Cancellation stops the agent instead of returning a partial answer.
 
 The optional `withToolTimeout` helper applies an independent deadline to an individual tool. It forwards the agent's abort signal, gives the tool a signal that also aborts on timeout, and rejects with a `TimeoutError` if the deadline expires (even if the tool ignores cancellation):
 
 ```ts
-import { agent } from "./src/index.ts";
 import { withToolTimeout } from "./src/tool-timeout.ts";
 
 const tools = {
@@ -88,23 +87,20 @@ const tools = {
     },
   }, 5_000),
 };
-
-const answer = await agent("Look up the record", tools);
 ```
 
 `timeoutMs` must be a positive safe integer. The wrapper cannot forcibly stop arbitrary JavaScript; tools should observe the provided signal to cancel their underlying work promptly.
 
-The optional `withToolRetry` helper adds bounded exponential backoff for tools that can safely be called more than once. Retries are opt-in and apply to thrown errors; by default it makes at most three total attempts, starting with a 100ms delay and capping backoff at 5 seconds. Provide `shouldRetry(error, failedAttempt)` to avoid retrying permanent failures. **Only wrap idempotent tools** (or operations protected by an idempotency key): a timeout or network error can happen after a remote side effect already occurred.
+The optional `withToolRetry` helper adds bounded exponential backoff for tools that can safely be called more than once. Retries are opt-in and apply to thrown errors; by default it makes at most three total attempts, starting with a 100ms delay and capping backoff at five seconds. Provide `shouldRetry(error, failedAttempt)` to avoid retrying permanent failures. **Only wrap idempotent tools** (or operations protected by an idempotency key): a timeout or network error can occur after a remote side effect already happened.
 
 ```ts
-import { agent } from "./src/index.ts";
 import { withToolRetry } from "./src/tool-retry.ts";
 
 const tools = {
   lookup: withToolRetry({
     description: "Look up a record",
     parameters: { type: "object", properties: {} },
-    run: async () => fetch("https://example.com/lookup").then(response => response.json()),
+    run: async () => (await fetch("https://example.com/lookup")).json(),
   }, {
     maxAttempts: 4,
     initialDelayMs: 200,
@@ -112,11 +108,9 @@ const tools = {
     shouldRetry: error => !(error instanceof RangeError),
   }),
 };
-
-const answer = await agent("Look up the record", tools);
 ```
 
-The parent agent's `AbortSignal` is passed to each attempt and interrupts both in-flight waits and backoff delays. Configure `maxAttempts` (a positive safe integer), `initialDelayMs` (a non-negative safe integer), `maxDelayMs` (at least the initial delay), and `backoffFactor` (a finite number at least 1) to tune retries.
+The parent agent's `AbortSignal` is passed to every attempt and interrupts both in-flight waits and backoff delays. Configure `maxAttempts` as a positive safe integer, `initialDelayMs` as a non-negative safe integer, `maxDelayMs` as a safe integer at least as large as the initial delay, and `backoffFactor` as a finite number at least 1.
 
 The maximum model-turn count is configurable with an optional ninth `agent` argument. It defaults to 8; invalid, zero, negative, or non-integer values are rejected before any request is sent:
 
@@ -133,5 +127,26 @@ const answer = await agent(
   { maxSteps: 16 },
 );
 ```
+
+The optional `withToolValidation` helper validates parsed tool arguments against the tool's declared `parameters` schema before invoking `run`, preventing invalid inputs from reaching tool side effects. It is dependency-free and supports the common keywords `type`, `enum`, `required`, `properties`, `additionalProperties: false`, string `minLength`/`maxLength`/`pattern`, numeric `minimum`/`maximum`/`exclusiveMinimum`/`exclusiveMaximum`, and array `items`/`minItems`/`maxItems`:
+
+```ts
+import { withToolValidation } from "./src/tool-validation.ts";
+
+const tools = {
+  search: withToolValidation({
+    description: "Search records",
+    parameters: {
+      type: "object",
+      properties: { query: { type: "string", minLength: 1 } },
+      required: ["query"],
+      additionalProperties: false,
+    },
+    run: async ({ query }) => searchRecords(query),
+  }),
+};
+```
+
+On invalid input the wrapper throws `ToolArgumentValidationError` before calling the tool. Like the retry and timeout helpers, this is opt-in; wrap only tools whose declared parameter schema accurately describes what their implementation accepts.
 
 This is a deliberately small starting point, not a production framework: tool validation and persistence are left to the caller.
