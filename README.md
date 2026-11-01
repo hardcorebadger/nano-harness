@@ -94,6 +94,30 @@ const answer = await agent("Look up the record", tools);
 
 `timeoutMs` must be a positive safe integer. The wrapper cannot forcibly stop arbitrary JavaScript; tools should observe the provided signal to cancel their underlying work promptly.
 
+The optional `withToolRetry` helper adds bounded exponential backoff for tools that can safely be called more than once. Retries are opt-in and apply to thrown errors; by default it makes at most three total attempts, starting with a 100ms delay and capping backoff at 5 seconds. Provide `shouldRetry(error, failedAttempt)` to avoid retrying permanent failures. **Only wrap idempotent tools** (or operations protected by an idempotency key): a timeout or network error can happen after a remote side effect already occurred.
+
+```ts
+import { agent } from "./src/index.ts";
+import { withToolRetry } from "./src/tool-retry.ts";
+
+const tools = {
+  lookup: withToolRetry({
+    description: "Look up a record",
+    parameters: { type: "object", properties: {} },
+    run: async () => fetch("https://example.com/lookup").then(response => response.json()),
+  }, {
+    maxAttempts: 4,
+    initialDelayMs: 200,
+    maxDelayMs: 3_000,
+    shouldRetry: error => !(error instanceof RangeError),
+  }),
+};
+
+const answer = await agent("Look up the record", tools);
+```
+
+The parent agent's `AbortSignal` is passed to each attempt and interrupts both in-flight waits and backoff delays. Configure `maxAttempts` (a positive safe integer), `initialDelayMs` (a non-negative safe integer), `maxDelayMs` (at least the initial delay), and `backoffFactor` (a finite number at least 1) to tune retries.
+
 The maximum model-turn count is configurable with an optional ninth `agent` argument. It defaults to 8; invalid, zero, negative, or non-integer values are rejected before any request is sent:
 
 ```ts
@@ -110,4 +134,4 @@ const answer = await agent(
 );
 ```
 
-This is a deliberately small starting point, not a production framework: tool validation, retries, and persistence are left to the caller.
+This is a deliberately small starting point, not a production framework: tool validation and persistence are left to the caller.
