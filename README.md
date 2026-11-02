@@ -131,6 +131,25 @@ const tools = {
 
 Rate limiting is per wrapper instance and process; it does not coordinate separate wrapped instances or multiple processes.
 
+The optional `withToolConcurrencyLimit` helper caps the number of in-flight calls through one wrapped tool instance. Calls beyond the limit wait FIFO for a slot; queued calls respect the agent's `AbortSignal` and won't run if cancelled. The `maxConcurrent` argument must be a positive safe integer:
+
+```ts
+import { withToolConcurrencyLimit } from "./src/tool-concurrency-limit.ts";
+
+const tools = {
+  lookup: withToolConcurrencyLimit({
+    description: "Look up a record",
+    parameters: { type: "object", properties: {} },
+    run: async (input, context) => {
+      const response = await fetch("https://example.com/lookup", { signal: context?.signal });
+      return response.json();
+    },
+  }, 3),
+};
+```
+
+The concurrency limit is per wrapper instance and process; it does not coordinate separate wrapped instances or multiple processes. Calls already running are not forcibly stopped and should observe the supplied signal when they need to cancel their own work.
+
 The maximum model-turn count is configurable with an optional ninth `agent` argument. It defaults to 8; invalid, zero, negative, or non-integer values are rejected before any request is sent:
 
 ```ts
