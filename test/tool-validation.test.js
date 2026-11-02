@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ToolArgumentValidationError, withToolValidation } from "../src/tool-validation.ts";
+import {
+  ToolArgumentValidationError,
+  ToolOutputValidationError,
+  withToolOutputValidation,
+  withToolValidation,
+} from "../src/tool-validation.ts";
 
 const schema = {
   type: "object",
@@ -51,4 +56,56 @@ test("enum comparison handles equivalent nested JSON objects", async () => {
   });
 
   assert.deepEqual(await wrapped.run({ choice: { b: [true], a: 1 } }), { choice: { b: [true], a: 1 } });
+});
+
+test("withToolOutputValidation returns valid results unchanged and forwards context", async () => {
+  const context = { signal: new AbortController().signal };
+  const result = { id: "r-1", score: 0.8 };
+  let receivedContext;
+  const wrapped = withToolOutputValidation({
+    description: "Fetch a record",
+    parameters: { type: "object" },
+    run: async (_input, runContext) => {
+      receivedContext = runContext;
+      return result;
+    },
+  }, {
+    type: "object",
+    properties: { id: { type: "string", minLength: 1 }, score: { type: "number", minimum: 0, maximum: 1 } },
+    required: ["id", "score"],
+    additionalProperties: false,
+  });
+
+  assert.equal(await wrapped.run({}, context), result);
+  assert.equal(receivedContext, context);
+});
+
+test("withToolOutputValidation rejects invalid results after the tool runs", async () => {
+  let calls = 0;
+  const wrapped = withToolOutputValidation({
+    description: "Fetch a record",
+    parameters: { type: "object" },
+    run: async () => {
+      calls++;
+      return { id: 12, extra: true };
+    },
+  }, { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false });
+
+  await assert.rejects(() => wrapped.run({}), error => {
+    assert.ok(error instanceof ToolOutputValidationError);
+    assert.match(error.message, /Invalid tool output: \\.id must be string/);
+    return true;
+  });
+  assert.equal(calls, 1);
+});
+
+test("withToolOutputValidation validates array items and rejects an invalid schema value", async () => {
+  const wrapped = withToolOutputValidation({
+    description: "List records",
+    parameters: { type: "object" },
+    run: async () => ["valid", 7],
+  }, { type: "array", items: { type: "string" } });
+
+  await assert.rejects(() => wrapped.run({}), error => error instanceof ToolOutputValidationError && /\$\[1\] must be string/.test(error.message));
+  assert.throws(() => withToolOutputValidation({ description: "x", parameters: {}, run: () => null }, null), /schema must be a JSON Schema object/);
 });

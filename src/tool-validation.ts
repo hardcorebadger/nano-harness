@@ -96,6 +96,14 @@ export class ToolArgumentValidationError extends Error {
   }
 }
 
+/** Thrown when a successful tool result does not match its output schema. */
+export class ToolOutputValidationError extends Error {
+  constructor(message: string) {
+    super(`Invalid tool output: ${message}`);
+    this.name = "ToolOutputValidationError";
+  }
+}
+
 /**
  * Wrap a tool to check parsed arguments against its declared JSON Schema before
  * any tool code runs. Supports type, enum, required, properties,
@@ -109,6 +117,24 @@ export function withToolValidation(tool: Tool): Tool {
       const error = validate(input, tool.parameters, "$", 0);
       if (error) throw new ToolArgumentValidationError(error);
       return tool.run(input, context);
+    },
+  };
+}
+
+/**
+ * Wrap a tool to check successful results against a JSON Schema before they are
+ * returned to the harness. Uses the same supported keywords as withToolValidation.
+ */
+export function withToolOutputValidation(tool: Tool, schema: Record<string, unknown>): Tool {
+  if (!isObject(schema)) throw new TypeError("schema must be a JSON Schema object");
+
+  return {
+    ...tool,
+    run: async (input, context) => {
+      const result = await tool.run(input, context);
+      const error = validate(result, schema, "$", 0);
+      if (error) throw new ToolOutputValidationError(error);
+      return result;
     },
   };
 }
