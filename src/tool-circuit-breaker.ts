@@ -79,7 +79,10 @@ export function withToolCircuitBreaker(tool: Tool, options: ToolCircuitBreakerOp
 
       try {
         const result = await tool.run(input, context);
-        close();
+        // A late success from a call started before the circuit opened must not
+        // close it; only a half-open probe can establish recovery.
+        if (isProbe) close();
+        else if (openedAt === undefined) failures = 0;
         return result;
       } catch (error) {
         // Cancellation is not evidence that the dependency failed.
@@ -87,16 +90,20 @@ export function withToolCircuitBreaker(tool: Tool, options: ToolCircuitBreakerOp
           if (isProbe) probeInFlight = false;
           throw abortReason(context.signal);
         }
-        const counted = shouldCountFailure(error);
-        if (!counted || !isProbe && openedAt === undefined) {
-          if (isProbe || !counted) close();
-          if (counted) {
-            failures++;
-            if (failures >= failureThreshold) open(Date.now());
-          }
-        } else {
-          // A failed half-open probe restarts the full cooldown.
-          open(Date.now());
+        let counted = true;
+        try {
+          counted = shouldCountFailure(error);
+        } catch {
+          // A broken classifier should fail safe rather than leave a probe stuck.
+          counted = true;
+        }
+
+        if (isProbe) {
+          if (counted) open(Date.now());
+          else close();
+        } else if (counted && openedAt === undefined) {
+          failures++;
+          if (failures >= failureThreshold) open(Date.now());
         }
         throw error;
       }
