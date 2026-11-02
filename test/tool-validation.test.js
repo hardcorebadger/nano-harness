@@ -93,7 +93,7 @@ test("withToolOutputValidation rejects invalid results after the tool runs", asy
 
   await assert.rejects(() => wrapped.run({}), error => {
     assert.ok(error instanceof ToolOutputValidationError);
-    assert.match(error.message, /Invalid tool output: \\.id must be string/);
+    assert.ok(error.message.includes("Invalid tool output: $.id must be string"));
     return true;
   });
   assert.equal(calls, 1);
@@ -106,6 +106,10 @@ test("withToolOutputValidation validates array items and rejects an invalid sche
     run: async () => ["valid", 7],
   }, { type: "array", items: { type: "string" } });
 
-  await assert.rejects(() => wrapped.run({}), error => error instanceof ToolOutputValidationError && /\$\[1\] must be string/.test(error.message));
+  await assert.rejects(() => wrapped.run({}), error => {
+    assert.ok(error instanceof ToolOutputValidationError);
+    assert.ok(error.message.includes("$[1] must be string"));
+    return true;
+  });
   assert.throws(() => withToolOutputValidation({ description: "x", parameters: {}, run: () => null }, null), /schema must be a JSON Schema object/);
 });

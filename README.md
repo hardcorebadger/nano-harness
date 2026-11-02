@@ -206,6 +206,25 @@ const tools = {
 
 On invalid input the wrapper throws `ToolArgumentValidationError` before calling `run`. Like the retry and timeout helpers, this is opt-in; wrap only tools whose declared parameter schema accurately describes what their implementation accepts.
 
+The optional `withToolOutputValidation` helper uses the same supported schema keywords to check successful results before returning them to the harness:
+
+```ts
+import { withToolOutputValidation } from "./src/tool-validation.ts";
+
+const lookup = withToolOutputValidation({
+  description: "Look up a record",
+  parameters: { type: "object", properties: {} },
+  run: async () => fetchRecord(),
+}, {
+  type: "object",
+  properties: { id: { type: "string" }, score: { type: "number", minimum: 0 } },
+  required: ["id", "score"],
+  additionalProperties: false,
+});
+```
+
+A mismatch throws `ToolOutputValidationError` and rejects the tool call; it does not undo side effects already performed by `run`. This is opt-in and dependency-free.
+
 The optional `withToolCircuitBreaker` helper is an opt-in resilience wrapper. It opens after a configurable number of consecutive failures, fails fast without calling the underlying tool during its cooldown, then allows one half-open probe. A successful call resets the circuit; a failed probe restarts the cooldown. Caller cancellation is not counted as a dependency failure, and `shouldCountFailure(error)` can exclude domain errors. See [`docs/tool-circuit-breaker.md`](docs/tool-circuit-breaker.md) for options and usage.
 
 This is a deliberately small starting point, not a production framework: tool validation and persistence are left to the caller.
