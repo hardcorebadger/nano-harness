@@ -150,6 +150,25 @@ const tools = {
 
 The concurrency limit is per wrapper instance and process; it does not coordinate separate wrapped instances or multiple processes. Calls already running are not forcibly stopped and should observe the supplied signal when they need to cancel their own work.
 
+The optional `withToolCache` helper caches successful results for matching tool inputs. It defaults to a 30-second TTL and 100-entry LRU cache; configure `ttlMs`, `maxEntries`, or `key(input)` as needed:
+
+```ts
+import { withToolCache } from "./src/tool-cache.ts";
+
+const tools = {
+  lookup: withToolCache({
+    description: "Look up a public record",
+    parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+    run: async ({ id }, context) => {
+      const response = await fetch(`https://example.com/records/${id}`, { signal: context?.signal });
+      return response.json();
+    },
+  }, { ttlMs: 60_000, maxEntries: 250 }),
+};
+```
+
+By default, inputs are keyed with `JSON.stringify`; provide `key` to canonicalize equivalent inputs or include any additional cache dimensions. Only wrap read-only tools whose results are safe to reuse and whose relevant context is represented by the key. Errors are never cached. The cache is per wrapper instance and process, and cached result objects are returned as-is.
+
 The maximum model-turn count is configurable with an optional ninth `agent` argument. It defaults to 8; invalid, zero, negative, or non-integer values are rejected before any request is sent:
 
 ```ts
