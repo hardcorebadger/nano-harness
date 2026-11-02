@@ -112,6 +112,25 @@ const tools = {
 
 The parent agent's `AbortSignal` is passed to every attempt and interrupts both in-flight waits and backoff delays. Configure `maxAttempts` as a positive safe integer, `initialDelayMs` as a non-negative safe integer, `maxDelayMs` as a safe integer at least as large as the initial delay, and `backoffFactor` as a finite number at least 1.
 
+The optional `withToolRateLimit` helper spaces tool starts by a minimum interval, including concurrent calls made through the same wrapped tool. Tool work can overlap; only start times are spaced. Calls waiting for their turn honor the agent's `AbortSignal`, so cancelled queued calls never invoke the tool. The default interval is 1,000ms; set `minIntervalMs` to a non-negative safe integer no greater than 2,147,483,647:
+
+```ts
+import { withToolRateLimit } from "./src/tool-rate-limit.ts";
+
+const tools = {
+  lookup: withToolRateLimit({
+    description: "Look up a record",
+    parameters: { type: "object", properties: {} },
+    run: async (input, context) => {
+      const response = await fetch("https://example.com/lookup", { signal: context?.signal });
+      return response.json();
+    },
+  }, { minIntervalMs: 250 }),
+};
+```
+
+Rate limiting is per wrapper instance and process; it does not coordinate separate wrapped instances or multiple processes.
+
 The maximum model-turn count is configurable with an optional ninth `agent` argument. It defaults to 8; invalid, zero, negative, or non-integer values are rejected before any request is sent:
 
 ```ts
