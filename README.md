@@ -112,7 +112,7 @@ const tools = {
 
 The parent agent's `AbortSignal` is passed to every attempt and interrupts both in-flight waits and backoff delays. Configure `maxAttempts` as a positive safe integer, `initialDelayMs` as a non-negative safe integer, `maxDelayMs` as a safe integer at least as large as the initial delay, and `backoffFactor` as a finite number at least 1.
 
-The optional `withToolRateLimit` helper spaces tool starts by a minimum interval, including concurrent calls made through the same wrapped tool. Tool work can overlap; only start times are spaced. Calls waiting for their turn honor the agent's `AbortSignal`, so cancelled queued calls never invoke the tool. The default interval is 1,000ms; set `minIntervalMs` to a non-negative safe integer no greater than 2,147,483,647:
+The optional `withToolRateLimit` helper spaces tool starts by a minimum interval, including concurrent calls made through the same wrapped tool. Tool work can overlap; only start times are spaced. The default interval is 1,000ms; set `minIntervalMs` to a non-negative safe integer no greater than 2,147,483,647:
 
 ```ts
 import { withToolRateLimit } from "./src/tool-rate-limit.ts";
@@ -204,6 +204,8 @@ const tools = {
 };
 ```
 
-On invalid input the wrapper throws `ToolArgumentValidationError` before calling the tool. Like the retry and timeout helpers, this is opt-in; wrap only tools whose declared parameter schema accurately describes what their implementation accepts.
+On invalid input the wrapper throws `ToolArgumentValidationError` before calling `run`. Like the retry and timeout helpers, this is opt-in; wrap only tools whose declared parameter schema accurately describes what their implementation accepts.
+
+The optional `withToolCircuitBreaker` helper is an opt-in resilience wrapper. It opens after a configurable number of consecutive failures, fails fast without calling the underlying tool during its cooldown, then allows one half-open probe. A successful call resets the circuit; a failed probe restarts the cooldown. Caller cancellation is not counted as a dependency failure, and `shouldCountFailure(error)` can exclude domain errors. See [`docs/tool-circuit-breaker.md`](docs/tool-circuit-breaker.md) for options and usage.
 
 This is a deliberately small starting point, not a production framework: tool validation and persistence are left to the caller.
