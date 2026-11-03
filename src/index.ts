@@ -41,6 +41,18 @@ const cosine = (a: number[], b: number[]) => {
 
 const env = (globalThis as any).process?.env ?? {};
 
+const request = async (url: string, init: RequestInit) => {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const response = await fetch(url, init);
+      if (![408, 429].includes(response.status) && response.status < 500 || attempt === 2) return response;
+    } catch (error) {
+      if (attempt === 2) throw error;
+    }
+    await new Promise(resolve => setTimeout(resolve, 250 * 2 ** attempt));
+  }
+};
+
 export async function agent(
   prompt: string,
   tools: Record<string, Tool>,
@@ -110,7 +122,7 @@ export async function agent(
   const embed = async (input: string[]) => {
     const base = env.BASE_URL ?? "https://api.openai.com/v1/chat/completions";
     const url = /\/chat\/completions\/?$/.test(base) ? base.replace(/\/chat\/completions\/?$/, "/embeddings") : `${base.replace(/\/$/, "")}/embeddings`;
-    const response = await fetch(url, {
+    const response = await request(url, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${env.OPENAI_API_KEY}` },
       body: JSON.stringify({ model: env.EMBEDDING_MODEL ?? "text-embedding-3-small", input }),
@@ -122,7 +134,7 @@ export async function agent(
 
   for (let step = 0; step < 8; step++) {
     const available = new Set([...always, ...loaded.keys()]);
-    const response = await fetch(env.BASE_URL ?? "https://api.openai.com/v1/chat/completions", {
+    const response = await request(env.BASE_URL ?? "https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "content-type": "application/json",
